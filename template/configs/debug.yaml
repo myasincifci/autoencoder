@@ -6,3 +6,6 @@ logging: True
 
 data:
     path: /data
+
+logger:
+    project: autoencoder-debug

@@ -7,21 +7,15 @@ model:
 
 data:
     path: /tmp
-    num_classes: 7
+    num_classes: 10
 
 param:
-    lr: 2e-3
-    batch_size: 32
+    lr: 5e-4
+    batch_size: 2_048
 
 trainer:
     max_steps: 100_000
-    check_val_every_n_epoch: 1
-
-mixstyle:
-    active: True
-    p: 1.0 
-    alpha: 0.1
-    eps: 1e-6
+    check_val_every_n_epoch: 10
 
 logger:
-    project: supervised-pacs-base
+    project: autoencoder-base

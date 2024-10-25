@@ -1,41 +1,33 @@
-import os
 from typing import List
-
-from torch import tensor
+from torchvision.datasets import CIFAR10
 from pytorch_lightning.utilities.types import TRAIN_DATALOADERS
 from torch.utils.data import DataLoader
 from torchvision.transforms import v2 as T
 import pytorch_lightning as pl
-from lightly.transforms.byol_transform import (BYOLTransform,
-                                               BYOLView1Transform,
-                                               BYOLView2Transform)
 from lightly.transforms.utils import IMAGENET_NORMALIZE
-from data_modules.pacs_h5_dataset import get_pacs_loo
-from utils import DomainMapper
 
-class PacsDM(pl.LightningDataModule):
-    def __init__(self, cfg, leave_out: List=None) -> None:
+class CIFAR10DM(pl.LightningDataModule):
+    def __init__(self, cfg) -> None:
         super().__init__()
         self.data_dir = cfg.data.path
         self.batch_size = cfg.param.batch_size
 
-        self.transform = T.Compose([
-            
-            T.Normalize(
-                mean=[0.6400, 0.6076, 0.5604],
-                std=[0.3090, 0.3109, 0.3374],
-            ),
+        self.train_transform = T.Compose([
+            T.RandomHorizontalFlip(),
+            T.ToTensor(),
+            T.Normalize((0.5,),(0.5,)),
         ])
 
-        self.train_set, self.test_set = get_pacs_loo(
-            root=cfg.data.path,
-            leave_out=leave_out,
-            train_tf=self.transform,
-            test_tf=self.transform
-        )
+        self.val_transform = T.Compose([
+            T.ToTensor(),
+            T.Normalize((0.5,),(0.5,)),
+        ])
+
+        self.train_set = CIFAR10(self.data_dir, train=True, transform=self.train_transform, download=True)
+        self.test_set = CIFAR10(self.data_dir, train=False, transform=self.val_transform)
 
         self.cfg = cfg
-        self.num_classes = self.train_set.n_classes
+        self.num_classes = len(self.train_set.classes)
 
     def setup(self, stage: str) -> None:
         if stage == 'fit':
@@ -52,9 +44,10 @@ class PacsDM(pl.LightningDataModule):
             self.train_set,
             batch_size=self.batch_size,
             shuffle=True,
-            drop_last=False,
+            drop_last=True,
             num_workers=8,
             pin_memory=True,
+            persistent_workers=True
         )
     
     def val_dataloader(self) -> TRAIN_DATALOADERS:    
@@ -64,7 +57,8 @@ class PacsDM(pl.LightningDataModule):
             shuffle=False,
             drop_last=False,
             num_workers=8,
-            pin_memory=True
+            pin_memory=True,
+            persistent_workers=True
         )
     
 def main():

@@ -3,8 +3,8 @@ import hydra
 import pytorch_lightning as L
 import torch
 import torch.nn as nn
-from data_modules.pacs_dm import PacsDM
-from model import ResnetClf
+from template.data_modules.CIFAR10_dm import CIFAR10DM
+from template.model import ResnetClf
 from omegaconf import DictConfig, OmegaConf
 from pytorch_lightning.loggers import WandbLogger
 from torchvision import transforms as T
@@ -30,10 +30,10 @@ def main(cfg: DictConfig) -> None:
     L.seed_everything(42, workers=True)
 
     # Data
-    data_module = PacsDM(cfg, leave_out=['sketch'])
+    data_module = CIFAR10DM(cfg)
 
     # Model
-    barlow_twins = ResnetClf(cfg=cfg)
+    model = ResnetClf(cfg=cfg)
 
     trainer = L.Trainer(
         max_steps=cfg.trainer.max_steps,
@@ -44,7 +44,7 @@ def main(cfg: DictConfig) -> None:
     )
 
     trainer.fit(
-        model=barlow_twins,
+        model=model,
         datamodule=data_module
     )
 
