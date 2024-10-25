@@ -1,0 +1,8 @@
+defaults:
+    - base
+
+name: Debug
+logging: True
+
+data:
+    path: /data

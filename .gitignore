@@ -1,0 +1,9 @@
+*.hdf5
+*.pyc
+
+data/
+logs/
+wandb/
+outputs/
+lightning_logs/
+__pycache__/
