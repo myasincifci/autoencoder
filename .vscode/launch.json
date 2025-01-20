@@ -17,7 +17,17 @@
             "request": "launch",
             "program": "template/train.py",
             "console": "integratedTerminal",
-            "args": ["--config-name", "debug"]
+            "args": ["--config-name", "debug"],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "TrainVAE",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "template/train_ae.py",
+            "console": "integratedTerminal",
+            "args": ["--config-name", "vae_static_mnist"],
+            "cwd": "${workspaceFolder}"
         }
     ]
 }

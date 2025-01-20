@@ -1,63 +1,86 @@
-from typing import Any
-
+import math
 import torch
 from torch import nn
-import torch.optim as optim
-from torchvision.models.resnet import resnet18
+from torch.nn import functional as F
 
 import pytorch_lightning as L
-from pytorch_lightning.utilities.types import STEP_OUTPUT
 
-class Decoder(nn.Module):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.deconv1 = nn.ConvTranspose2d(512, 256, kernel_size=2)
-        self.deconv2 = nn.ConvTranspose2d(256, 128, kernel_size=3)
-        self.deconv3 = nn.ConvTranspose2d(128, 64, kernel_size=3, output_padding=1, padding=1, stride=2)
-        self.deconv4 = nn.ConvTranspose2d(64, 32, kernel_size=3, output_padding=1, padding=1, stride=2)
-        self.deconv5 = nn.ConvTranspose2d(32, 3, kernel_size=3, output_padding=1, padding=1, stride=2)
+from template.modules import Encoder, Decoder, ConvEncoder, ConvDecoder
+    
+class VAE(nn.Module):
+    def __init__(self, latent_dim, data_shape):
+        super().__init__()
+        self.encoder = ConvEncoder(data_shape, c_hid=32, latent_dim=latent_dim, act_fn=nn.ReLU)
+        self.decoder = ConvDecoder(data_shape, c_hid=32, latent_dim=latent_dim, act_fn=nn.ReLU)
 
+    def reparameterize(self, mu, logvar):
+        std = torch.exp(0.5*logvar)
+        eps = torch.randn_like(std)
+        return mu + eps*std
+    
     def forward(self, x):
-        x = x.view(-1, 512, 1, 1)
-        x = nn.functional.relu(self.deconv1(x))
-        x = nn.functional.relu(self.deconv2(x))
-        x = nn.functional.relu(self.deconv3(x))
-        x = nn.functional.relu(self.deconv4(x))
-        x = nn.functional.tanh(self.deconv5(x))
+        mu, logvar = self.encoder(x)
+        z = self.reparameterize(mu, logvar)
 
-        return x
+        return self.decoder(z), mu, logvar
 
-class ResnetClf(L.LightningModule):
-    def __init__(self, cfg, *args: Any, **kwargs: Any) -> None:
+class VAEModule(L.LightningModule):
+    def __init__(self, cfg, *args, **kwargs):
         super().__init__(*args, **kwargs)
-
-        self.encoder = resnet18()
-        self.encoder.fc = nn.Identity()
-
-        self.decoder = Decoder()
-
-        self.criterion = nn.MSELoss()
-        
+        self.model = VAE(
+            latent_dim=cfg.param.latent_dim ,
+            data_shape=cfg.data.shape
+        )
         self.cfg = cfg
 
-    def training_step(self, batch, batch_idx) -> STEP_OUTPUT:
-        X, _ = batch
+    def loss_function(self, recon_x, x, mu, logvar):
+        # BCE = F.binary_cross_entropy(recon_x, x.view(-1, x.shape[-1]), reduction='sum')
+        BCE = F.binary_cross_entropy(recon_x, x.flatten(start_dim=1), reduction='sum')
 
-        Y = self.decoder(self.encoder(X))
-        loss = self.criterion(Y, X)
-        self.log("train/loss", loss.item(), prog_bar=True)
+        # see Appendix B from VAE paper:
+        # Kingma and Welling. Auto-Encoding Variational Bayes. ICLR, 2014
+        # https://arxiv.org/abs/1312.6114
+        # 0.5 * sum(1 + log(sigma^2) - mu^2 - sigma^2)
+        KLD = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
 
+        return BCE + KLD
+
+    def training_step(self, batch, batch_idx):
+        X, *_ = batch
+        X = X#.flatten(start_dim=1)
+
+        X_, mu, logvar = self.model(X)
+        loss = self.loss_function(X_, X, mu, logvar)
+
+        self.log('train/loss', loss, prog_bar=True)
+        
         return loss
     
-    def validation_step(self, batch, batch_idx, dataloader_idx=0) -> None:
-        X, _ = batch
+    def validation_step(self, batch, batch_idx):
+        X, *_ = batch
+        X = X#.flatten(start_dim=1)
 
-        Y = self.decoder(self.encoder(X))
-        loss = self.criterion(Y, X)
+        X_, mu, logvar = self.model(X)
+        loss = self.loss_function(X_, X, mu, logvar)
+        
+        self.log('val/loss', loss, prog_bar=True)
 
-        self.log("val/loss", loss.item())
+    def on_validation_epoch_end(self):
+        # Log val image
+        val_img, *_ = self.trainer.datamodule.val_dataloader().dataset[0]
+        val_img = val_img[None].cuda()#.flatten(start_dim=1)
+        val_img_, *_ = self.model(val_img)
+        val_img_ = val_img_.reshape(1, *self.cfg.data.shape)
+        wandb_logger = self.logger
+        wandb_logger.log_image('val/image', [val_img_])
 
-    def configure_optimizers(self) -> Any:
-        optimizer = optim.Adam(params=self.parameters(), lr=self.cfg.param.lr)
+    def configure_optimizers(self):
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.cfg.param.lr)
+        
+        return optimizer
 
-        return [optimizer]
+def main():
+    pass
+
+if __name__ == "__main__":
+    main()

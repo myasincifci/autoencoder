@@ -1,16 +1,11 @@
 name: Base
-logging: True
-unlabeled: True
-
-model:
-    pretrained: True
+logging: true
 
 data:
-    path: /tmp
-    num_classes: 10
+    path: /data
 
 param:
-    lr: 5e-4
+    lr: 1e-4
     batch_size: 2_048
 
 trainer:

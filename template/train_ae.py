@@ -8,8 +8,9 @@ import hydra
 from omegaconf import DictConfig, OmegaConf
 import wandb
 
-from template.data_modules.moving_mnist_dm import MovingMnistDM
-from template.model import ResnetAutoencoder
+from template.data_modules.static_mnist_dm import StaticMNISTDM
+from template.data_modules.mnist_dm import MNISTDM
+from template.model import VAEModule
 
 @hydra.main(version_base=None, config_path="configs")
 def main(cfg: DictConfig) -> None:
@@ -31,10 +32,14 @@ def main(cfg: DictConfig) -> None:
     L.seed_everything(42, workers=True)
 
     # Data
-    data_module = MovingMnistDM(cfg)
+    match cfg.data.name:
+        case 'mnist':
+            data_module = MNISTDM(cfg)
+        case 'static_mnist':
+            data_module = StaticMNISTDM(cfg)
 
     # Model
-    model = ResnetAutoencoder(cfg=cfg)
+    model = VAEModule(cfg=cfg)
 
     trainer = L.Trainer(
         max_steps=cfg.trainer.max_steps,

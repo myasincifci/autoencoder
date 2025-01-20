@@ -2,13 +2,13 @@ defaults:
     - base
 
 name: Debug
-logging: False
+logging: true
 
 data:
     path: /data
 
 param:
-    batch_size: 8
+    batch_size: 256
 
 logger:
-    project: autoencoder-debug
+    project: vae-debug

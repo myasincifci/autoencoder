@@ -1,0 +1,22 @@
+defaults:
+    - base
+
+name: VAE MNIST
+logging: true
+
+data:
+    name: static_mnist
+    num_classes: 10
+    shape: [1, 64, 64]
+
+param:
+    lr: 1e-3
+    batch_size: 256
+    latent_dim: 50
+
+trainer:
+    max_steps: 100_000
+    check_val_every_n_epoch: 1
+
+logger:
+    project: vae-mnist

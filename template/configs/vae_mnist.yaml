@@ -1,0 +1,16 @@
+defaults:
+    - base
+
+name: VAE MNIST
+logging: true
+
+data:
+    name: mnist
+    num_classes: 10
+    shape: [1, 28, 28]
+
+param:
+    batch_size: 256
+
+logger:
+    project: vae-mnist
