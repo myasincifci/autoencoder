@@ -16,14 +16,12 @@ class MovingMnistDM(pl.LightningDataModule):
         self.train_transform = T.Compose(
             [
                 T.ToTensor(),
-                T.Normalize((0.5,), (0.5,)),
             ]
         )
 
         self.val_transform = T.Compose(
             [
                 T.ToTensor(),
-                T.Normalize((0.5,), (0.5,)),
             ]
         )
 

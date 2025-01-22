@@ -10,7 +10,7 @@ data:
     shape: [1, 64, 64]
 
 param:
-    lr: 1e-3
+    lr: 3e-3
     batch_size: 256
     latent_dim: 64
 
@@ -19,4 +19,4 @@ trainer:
     check_val_every_n_epoch: 1
 
 logger:
-    project: vae-mnist
+    project: vae-lstm-moving-mnist

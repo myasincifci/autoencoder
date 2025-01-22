@@ -9,7 +9,7 @@ from omegaconf import DictConfig, OmegaConf
 import wandb
 
 from template.data_modules.moving_mnist_dm import MovingMnistDM
-from template.model import ResnetAutoencoder
+from template.model import VAELSTMModule
 
 @hydra.main(version_base=None, config_path="configs")
 def main(cfg: DictConfig) -> None:
@@ -34,7 +34,7 @@ def main(cfg: DictConfig) -> None:
     data_module = MovingMnistDM(cfg)
 
     # Model
-    model = ResnetAutoencoder(cfg=cfg)
+    model = VAELSTMModule(cfg=cfg)
 
     trainer = L.Trainer(
         max_steps=cfg.trainer.max_steps,

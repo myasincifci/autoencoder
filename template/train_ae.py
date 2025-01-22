@@ -54,6 +54,5 @@ def main(cfg: DictConfig) -> None:
         datamodule=data_module
     )
 
-
 if __name__ == "__main__":
     main()
