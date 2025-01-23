@@ -8,56 +8,37 @@ import pytorch_lightning as L
 from template.modules.autoencoder import Encoder, Decoder, ConvEncoder, ConvDecoder
 
 class LSTM(nn.Module):
-    def __init__(self, in_dim, hidden_dim):
+    def __init__(self, in_dim, hidden_dim, num_layers=10):
         super(LSTM, self).__init__()
-        self.lstm1 = nn.LSTMCell(in_dim, hidden_dim)
-        self.lstm2 = nn.LSTMCell(hidden_dim, hidden_dim)
-        self.lstm3 = nn.LSTMCell(hidden_dim, hidden_dim)
-        self.lstm4 = nn.LSTMCell(hidden_dim, hidden_dim)
-        self.lstm5 = nn.LSTMCell(hidden_dim, hidden_dim)
+        self.num_layers = num_layers
+        self.lstm_cells = nn.ModuleList([nn.LSTMCell(in_dim if i == 0 else hidden_dim, hidden_dim) for i in range(num_layers)])
         self.linear = nn.Linear(hidden_dim, in_dim)
-
         self.hidden_dim = hidden_dim
 
-    def forward(self, input, future = 0):
+    def forward(self, input, future=0):
         B, T, D = input.size()
-
         outputs = []
-        h_t = torch.zeros(B, self.hidden_dim, dtype=torch.float, device=input.device)
-        c_t = torch.zeros(B, self.hidden_dim, dtype=torch.float, device=input.device)
-        h_t2 = torch.zeros(B, self.hidden_dim, dtype=torch.float, device=input.device)
-        c_t2 = torch.zeros(B, self.hidden_dim, dtype=torch.float, device=input.device)
-        h_t3 = torch.zeros(B, self.hidden_dim, dtype=torch.float, device=input.device)
-        c_t3 = torch.zeros(B, self.hidden_dim, dtype=torch.float, device=input.device)
-        h_t4 = torch.zeros(B, self.hidden_dim, dtype=torch.float, device=input.device)
-        c_t4 = torch.zeros(B, self.hidden_dim, dtype=torch.float, device=input.device)
-        h_t5 = torch.zeros(B, self.hidden_dim, dtype=torch.float, device=input.device)
-        c_t5 = torch.zeros(B, self.hidden_dim, dtype=torch.float, device=input.device)
+
+        h_t = [torch.zeros(B, self.hidden_dim, dtype=torch.float, device=input.device) for _ in range(self.num_layers)]
+        c_t = [torch.zeros(B, self.hidden_dim, dtype=torch.float, device=input.device) for _ in range(self.num_layers)]
 
         for input_t in input.split(1, dim=1):
             input_t = input_t.squeeze(1)
-
-            h_t, c_t = self.lstm1(input_t, (h_t, c_t))
-            h_t2, c_t2 = self.lstm2(h_t, (h_t2, c_t2))
-            h_t3, c_t3 = self.lstm3(h_t2, (h_t3, c_t3))
-            h_t4, c_t4 = self.lstm4(h_t3, (h_t4, c_t4))
-            h_t5, c_t5 = self.lstm5(h_t4, (h_t5, c_t5))
-            output = self.linear(h_t5)
-            output = output[:,None,:]
-
+            h_t[0], c_t[0] = self.lstm_cells[0](input_t, (h_t[0], c_t[0]))
+            for i in range(1, self.num_layers):
+                h_t[i], c_t[i] = self.lstm_cells[i](h_t[i-1], (h_t[i], c_t[i]))
+            output = self.linear(h_t[-1])
+            output = output[:, None, :]
             outputs += [output]
 
-        for i in range(future):# if we should predict the future
-            h_t, c_t = self.lstm1(output.squeeze(1), (h_t, c_t))
-            h_t2, c_t2 = self.lstm2(h_t, (h_t2, c_t2))
-            h_t3, c_t3 = self.lstm3(h_t2, (h_t3, c_t3))
-            h_t4, c_t4 = self.lstm4(h_t3, (h_t4, c_t4))
-            h_t5, c_t5 = self.lstm5(h_t4, (h_t5, c_t5))
-            output = self.linear(h_t5)
-
-            output = output[:,None,:]
-
+        for i in range(future):  # if we should predict the future
+            h_t[0], c_t[0] = self.lstm_cells[0](output.squeeze(1), (h_t[0], c_t[0]))
+            for i in range(1, self.num_layers):
+                h_t[i], c_t[i] = self.lstm_cells[i](h_t[i-1], (h_t[i], c_t[i]))
+            output = self.linear(h_t[-1])
+            output = output[:, None, :]
             outputs += [output]
+
         outputs = torch.cat(outputs, dim=1)
         return outputs
 
@@ -94,7 +75,8 @@ class VAELSTM(nn.Module):
     def __init__(self, latent_dim, data_shape, checkpoint=None):
         super().__init__()
         self.vae = VAE(latent_dim, data_shape, checkpoint=checkpoint)
-        self.lstm = LSTM(in_dim=latent_dim, hidden_dim=128)
+        self.lstm = LSTM(in_dim=2*latent_dim, hidden_dim=512, num_layers=5)
+        # self.lstm = nn.LSTM(latent_dim, hidden_size=128, num_layers=5, batch_first=True, proj_size=latent_dim)
         self.vae.requires_grad_(False)
 
     def forward(self, x, t):
@@ -103,22 +85,43 @@ class VAELSTM(nn.Module):
         # Encode all frames
         x = x.flatten(start_dim=0, end_dim=1)[:,None]
         mu, logvar = self.vae.encode(x)
-        z = self.vae.reparameterize(mu, logvar)
+        mu_logvar = torch.cat([mu, logvar], dim=1).view(B, T, -1)
+
+        mu_logvar_x = mu_logvar[:,:-1]
+        mu_logvar_y = mu_logvar[:,1:]
+
+        mu_logvar_pred = mu_logvar_x + self.lstm(mu_logvar_x)
+        loss = F.mse_loss(mu_logvar_pred[:,3:], mu_logvar_y[:,3:])
+
+        z = self.vae.reparameterize(mu_logvar_pred[:,:,:64], mu_logvar_pred[:,:,64:])
         
-        # Predict frames at t+1
-        z = z.view(B, T, -1)
 
-        z_x = z[:,:-1]
-        z_y = z[:,1:]
-
-        z_y_pred = self.lstm(z_x)
-        
-        loss = F.mse_loss(z_y_pred[:,3:], z_y[:,3:])
-
-        y = self.vae.decode(z_y_pred)
+        y = self.vae.decode(z)
         y = y.view(B*(T-1), 1, H, W)
         
         return loss
+
+    # def forward(self, x, t):
+    #     B, T, H, W = x.shape
+
+    #     # Encode all frames
+    #     x = x.flatten(start_dim=0, end_dim=1)[:,None]
+    #     mu, logvar = self.vae.encode(x)
+
+    #     z = self.vae.reparameterize(mu, logvar)
+        
+    #     # Predict frames at t+1
+    #     z = z.view(B, T, -1)
+
+    #     z_x = z[:,:-1]
+    #     z_y = z[:,1:]
+    #     z_y_pred = self.lstm(z_x)
+    #     loss = F.mse_loss(z_y_pred[:,3:], z_y[:,3:])
+
+    #     y = self.vae.decode(z_y_pred)
+    #     y = y.view(B*(T-1), 1, H, W)
+        
+    #     return loss
 
 class VAELSTMModule(L.LightningModule):
     def __init__(self, cfg, *args, **kwargs):
