@@ -11,7 +11,7 @@ data:
 
 param:
     lr: 3e-3
-    batch_size: 256
+    batch_size: 128
     latent_dim: 64
 
 trainer:
