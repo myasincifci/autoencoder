@@ -174,7 +174,7 @@ class SVGDeterministic(nn.Module):
             f_x_ = f_x_.view(-1, 1, H, W)
             loss_rec = F.mse_loss(f_x_, f_x_t[:,:T].reshape(-1, 1, H, W))
 
-        return loss_pred, loss_rec
+        return loss_pred, loss_rec, f_t_.view(B, T, H, W)
 
 class VAELSTM(nn.Module):
     def __init__(self, latent_dim, data_shape, checkpoint=None):
@@ -228,7 +228,7 @@ class SVGModule(L.LightningModule):
     def training_step(self, batch, batch_idx):
         X, T = batch[:,:10], batch[:,10:], 
 
-        loss, rec_loss = self.model(X, T)
+        loss, rec_loss, _ = self.model(X, T)
         self.log("train/loss", loss, prog_bar=True)
         self.log("train/rec_loss", rec_loss, prog_bar=True)
 
@@ -237,9 +237,16 @@ class SVGModule(L.LightningModule):
     def validation_step(self, batch, batch_idx):
         X, T = batch[:,:10], batch[:,10:], 
 
-        loss, rec_loss = self.model(X, T)
+        loss, rec_loss, f_t_o = self.model(X, T)
         self.log("val/loss", loss, prog_bar=True)
         self.log("val/rec_loss", rec_loss, prog_bar=True)
+
+        # Log the first element of f_t_o to wandb
+        f_t_o_first = f_t_o[0].cpu().detach().numpy()
+        T, H, W = f_t_o_first.shape
+        f_t_o_first_grid = f_t_o_first.transpose(1, 0, 2).reshape(H, T * W)
+        wandb_logger = self.logger
+        wandb_logger.log_image("val/predicted_frames", [f_t_o_first_grid])
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.cfg.param.lr, betas=(1e-4, 0.999))
