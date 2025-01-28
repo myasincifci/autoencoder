@@ -4,8 +4,7 @@ from torchvision.transforms import v2 as T
 import pytorch_lightning as pl
 from pytorch_lightning.utilities.types import TRAIN_DATALOADERS
 
-from template.data_modules.MovingMNIST.MovingMNIST import MovingMNIST
-
+from template.data_modules.moving_mnist import MovingMNIST
 
 class MovingMnistDM(pl.LightningDataModule):
     def __init__(self, cfg):
@@ -26,15 +25,16 @@ class MovingMnistDM(pl.LightningDataModule):
         )
 
         self.train_set = MovingMNIST(
-            "./template/data_modules/MovingMNIST",
-            transform=self.train_transform,
-            target_transform=self.train_transform,
+            train=True, 
+            data_root='data',
+            seq_len=cfg.data.seq_len,
+            deterministic=cfg.data.deterministic,
         )
         self.val_set = MovingMNIST(
-            "./template/data_modules/MovingMNIST",
-            train=False,
-            transform=self.val_transform,
-            target_transform=self.val_transform,
+            train=False, 
+            data_root='data',
+            seq_len=cfg.data.seq_len,
+            deterministic=cfg.data.deterministic,
         )
 
         self.cfg = cfg

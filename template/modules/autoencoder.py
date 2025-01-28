@@ -30,8 +30,9 @@ class Decoder(nn.Module):
         return F.sigmoid(self.fc3(h2))
 
 class ConvEncoder(nn.Module):
-    def __init__(self, data_shape, c_hid, latent_dim, act_fn):
+    def __init__(self, data_shape, c_hid, latent_dim, act_fn, variational=True):
         super().__init__()
+        self.variational = variational
         self.layers = nn.ModuleDict({
             'conv_1': nn.Sequential(
                 nn.Conv2d(data_shape[0], c_hid, kernel_size=3, padding=1, stride=2), # 32x32 => 16x16
@@ -63,14 +64,18 @@ class ConvEncoder(nn.Module):
             )
         })
         self.fc_mu = nn.Linear(64*2*c_hid, latent_dim)
-        self.fc_logvar = nn.Linear(64*2*c_hid, latent_dim)
+        if variational:
+            self.fc_logvar = nn.Linear(64*2*c_hid, latent_dim)
 
     def forward(self, x):
         for name, layer in self.layers.items():
             x = layer(x)
 
-        return self.fc_mu(x), self.fc_logvar(x)
-    
+        if self.variational:
+            return self.fc_mu(x), self.fc_logvar(x)
+        else:
+            return self.fc_mu(x)
+
 class ConvDecoder(nn.Module):
     def __init__(self, data_shape, c_hid, latent_dim, act_fn):
         super().__init__()

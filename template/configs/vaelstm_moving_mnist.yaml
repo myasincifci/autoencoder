@@ -5,14 +5,25 @@ name: VAE MNIST
 logging: true
 
 data:
-    name: static_mnist
+    name: moving_mnist
     num_classes: 10
     shape: [1, 64, 64]
+    seq_len: 20
+    deterministic: true
+
+model:
+    rec_loss: false
+    ae:
+        latent_dim: 128
+        checkpoint: null
+    lstm:
+        hidden_dim: 256
+        num_layers: 3
+        skip: true
 
 param:
-    lr: 3e-3
+    lr: 2e-3
     batch_size: 128
-    latent_dim: 64
 
 trainer:
     max_steps: 100_000

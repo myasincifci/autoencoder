@@ -9,7 +9,7 @@ from template.modules.autoencoder import Encoder, Decoder, ConvEncoder, ConvDeco
 
 
 class LSTM(nn.Module):
-    def __init__(self, in_dim, hidden_dim, num_layers=10):
+    def __init__(self, in_dim, hidden_dim, num_layers=10, skip=False):
         super(LSTM, self).__init__()
         self.num_layers = num_layers
         self.lstm_cells = nn.ModuleList(
@@ -20,6 +20,7 @@ class LSTM(nn.Module):
         )
         self.linear = nn.Linear(hidden_dim, in_dim)
         self.hidden_dim = hidden_dim
+        self.skip = skip
 
     def forward(self, input, future=0):
         B, T, D = input.size()
@@ -42,21 +43,59 @@ class LSTM(nn.Module):
             h_t[0], c_t[0] = self.lstm_cells[0](input_t, (h_t[0], c_t[0]))
             for i in range(1, self.num_layers):
                 h_t[i], c_t[i] = self.lstm_cells[i](h_t[i - 1], (h_t[i], c_t[i]))
-            output = self.linear(h_t[-1])
-            output = output[:, None, :]
+
+            if self.skip:
+                output = self.linear(h_t[-1]) + input_t
+            else:
+                output = self.linear(h_t[-1])
+
+            output = output[:, None, :] 
             outputs += [output]
 
         for i in range(future):  # if we should predict the future
-            h_t[0], c_t[0] = self.lstm_cells[0](output.squeeze(1), (h_t[0], c_t[0]))
+            input_t = output.squeeze(1)
+            h_t[0], c_t[0] = self.lstm_cells[0](input_t, (h_t[0], c_t[0]))
             for i in range(1, self.num_layers):
                 h_t[i], c_t[i] = self.lstm_cells[i](h_t[i - 1], (h_t[i], c_t[i]))
-            output = self.linear(h_t[-1])
+            
+            if self.skip:
+                output = self.linear(h_t[-1]) + input_t
+            else:
+                output = self.linear(h_t[-1])
+
             output = output[:, None, :]
             outputs += [output]
 
         outputs = torch.cat(outputs, dim=1)
         return outputs
 
+class AE(nn.Module):
+    def __init__(self, latent_dim, data_shape, checkpoint=None):
+        super().__init__()
+
+        self.encoder = ConvEncoder(
+            data_shape, c_hid=32, latent_dim=latent_dim, act_fn=nn.GELU, variational=False
+        )
+        self.decoder = ConvDecoder(
+            data_shape, c_hid=32, latent_dim=latent_dim, act_fn=nn.GELU
+        )
+
+        if checkpoint:
+            sd = torch.load(checkpoint)["state_dict"]
+            sd = {k.replace("model.", ""): v for k, v in sd.items()}
+            self.load_state_dict(sd)
+
+    def encode(self, x):
+        z = self.encoder(x)
+        return z
+    
+    def decode(self, z):
+        return self.decoder(z)
+
+    def forward(self, x):
+        z = self.encode(x)
+
+        return self.decode(z)
 
 class VAE(nn.Module):
     def __init__(self, latent_dim, data_shape, checkpoint=None):
@@ -91,6 +130,51 @@ class VAE(nn.Module):
 
         return self.decode(z), mu, logvar
 
+class SVGDeterministic(nn.Module):
+    def __init__(self, cfg):
+        super().__init__()
+        self.ae = AE(
+            cfg.model.ae.latent_dim, 
+            cfg.data.shape, 
+            checkpoint=cfg.model.ae.checkpoint if cfg.model.ae.checkpoint else None
+        )
+        self.lstm = LSTM(
+            in_dim=cfg.model.ae.latent_dim, 
+            hidden_dim=cfg.model.lstm.hidden_dim, 
+            num_layers=cfg.model.lstm.num_layers,
+            skip=cfg.model.lstm.skip
+        )
+        # self.ae.requires_grad_(False)
+        self.cfg = cfg
+
+    def forward(self, x, t):
+        B, T, H, W = x.shape
+
+        # Encode all frames
+        f_x_t = torch.cat((x, t), dim=1)
+        f_x_t_flat = f_x_t.view(-1, 1, H, W)
+        z_x_t = self.ae.encode(f_x_t_flat)
+        z_x_t = z_x_t.view(B, 2*T, -1)
+        z_x, z_t = z_x_t[:, :T], z_x_t[:, T:]
+
+        y_t = self.lstm(z_x, future=T)[:,T-1:-1]
+
+        # Reconstruct the future frames
+        f_t_ = self.ae.decode(y_t)
+        # y = y.view(B, T, H, W)
+
+        f_t_ = f_t_.view(-1, 1, H, W)
+        loss_pred = F.mse_loss(f_t_, f_x_t[:,T:].reshape(-1, 1, H, W))
+        
+        # Reconstruct present frames
+        loss_rec = 0
+        if self.cfg.model.rec_loss:
+            f_x_ = self.ae.decode(z_x)
+            
+            f_x_ = f_x_.view(-1, 1, H, W)
+            loss_rec = F.mse_loss(f_x_, f_x_t[:,:T].reshape(-1, 1, H, W))
+
+        return loss_pred, loss_rec
 
 class VAELSTM(nn.Module):
     def __init__(self, latent_dim, data_shape, checkpoint=None):
@@ -100,7 +184,7 @@ class VAELSTM(nn.Module):
         self.vae.requires_grad_(False)
 
     def vae_loss(self, recon_x, x, mu, logvar):
-        BCE = F.binary_cross_entropy(recon_x, x.flatten(start_dim=1), reduction="sum")
+        BCE = F.binary_cross_entropy(recon_x, x, reduction="sum")
 
         # see Appendix B from VAE paper:
         # Kingma and Welling. Auto-Encoding Variational Bayes. ICLR, 2014
@@ -108,35 +192,59 @@ class VAELSTM(nn.Module):
         # 0.5 * sum(1 + log(sigma^2) - mu^2 - sigma^2)
         KLD = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
 
-        return BCE + KLD
+        return BCE + 0.1*KLD
 
     def forward(self, x, t):
-        # TODO: FIXXXX!!!!
-
         B, T, H, W = x.shape
 
         # Encode all frames
-        x = x.flatten(start_dim=0, end_dim=1)[:, None]
-        mu, logvar = self.vae.encode(x)
+        x_flat = x.flatten(start_dim=0, end_dim=1)[:, None]
+        mu, logvar = self.vae.encode(x_flat)
         mu_logvar = torch.cat([mu, logvar], dim=1).view(B, T, -1)
 
         mu_logvar_x = mu_logvar[:, :-1]
-        mu_logvar_y = mu_logvar[:, 1:]
+        mu_logvar_t = mu_logvar[:, 1:]
 
-        mu_logvar_pred = mu_logvar_x + self.lstm(mu_logvar_x)
+        mu_logvar_y = mu_logvar_x + self.lstm(mu_logvar_x) 
         # loss = F.mse_loss(mu_logvar_pred[:, 3:], mu_logvar_y[:, 3:])
 
         z = self.vae.reparameterize(
-            mu_logvar_pred[:, :, :64], mu_logvar_pred[:, :, 64:]
-        )
+            mu_logvar_y[:, :, :64], mu_logvar_y[:, :, 64:]
+        ).view(B*(T-1), 1, -1)
 
         y = self.vae.decode(z)
         y = y.view(B * (T - 1), 1, H, W)
 
-        loss = self.vae_loss(y, x[1:], mu_logvar_pred[:, :, :64], mu_logvar_pred[:, :, 64:])
+        loss = self.vae_loss(y.reshape(B*(T-1), -1), x[:,1:].reshape(B*(T-1), -1), mu_logvar_y[:, :, :64], mu_logvar_y[:, :, 64:])
 
         return loss
 
+class SVGModule(L.LightningModule):
+    def __init__(self, cfg, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.model = SVGDeterministic(cfg)
+        self.cfg = cfg
+
+    def training_step(self, batch, batch_idx):
+        X, T = batch[:,:10], batch[:,10:], 
+
+        loss, rec_loss = self.model(X, T)
+        self.log("train/loss", loss, prog_bar=True)
+        self.log("train/rec_loss", rec_loss, prog_bar=True)
+
+        return loss + rec_loss
+    
+    def validation_step(self, batch, batch_idx):
+        X, T = batch[:,:10], batch[:,10:], 
+
+        loss, rec_loss = self.model(X, T)
+        self.log("val/loss", loss, prog_bar=True)
+        self.log("val/rec_loss", rec_loss, prog_bar=True)
+
+    def configure_optimizers(self):
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.cfg.param.lr, betas=(1e-4, 0.999))
+
+        return optimizer
 
 class VAELSTMModule(L.LightningModule):
     def __init__(self, cfg, *args, **kwargs):
@@ -166,6 +274,18 @@ class VAELSTMModule(L.LightningModule):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.cfg.param.lr)
 
         return optimizer
+
+
+class AEModule(L.LightningModule):
+    def __init__(self, cfg, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.model = AE(latent_dim=cfg.param.latent_dim, data_shape=cfg.data.shape)
+        self.cfg = cfg
+
+    def training_step(self, batch, batch_idx):
+        X, *_ = batch
+        X = X
+
 
 
 class VAEModule(L.LightningModule):
